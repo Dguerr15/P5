@@ -42,18 +42,20 @@ class Individual_Grid(object):
         measurements = metrics.metrics(self.to_level())
         # Print out the possible measurements or look at the implementation of metrics.py for other keys:
         # print(measurements.keys())
-        # Default fitness function: Just some arbitrary combination of a few criteria.  Is it good?  Who knows?
-        # STUDENT Modify this, and possibly add more metrics.  You can replace this with whatever code you like.
+        # Default fitness function: Just some arbitrary combination of a few criteria. Is it good? Who knows?
         coefficients = dict(
             meaningfulJumpVariance=0.5,
             negativeSpace=0.6,
             pathPercentage=0.5,
             emptyPercentage=0.6,
+            decorationPercentage=0.4,
+            leniency=0.4,
+            jumps=0.4,
+            jumpVariance=0.4,
             linearity=-0.5,
             solvability=2.0
         )
-        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m],
-                                coefficients))
+        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m], coefficients))
         return self
 
     # Return the cached fitness value or calculate it as needed.
@@ -63,32 +65,26 @@ class Individual_Grid(object):
         return self._fitness
 
     # Mutate a genome into a new genome.  Note that this is a _genome_, not an individual!
-    def mutate(self, genome):
-        # STUDENT implement a mutation operator, also consider not mutating this individual
-        # STUDENT also consider weighting the different tile types so it's not uniformly random
-        # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-
-        left = 1
-        right = width - 1
+    def mutate(self, mutation_rate=0.01):
         for y in range(height):
-            for x in range(left, right):
-                pass
-        return genome
+            for x in range(1, width - 1):  # Avoid mutating the border columns
+                if random.random() < mutation_rate:
+                    self.genome[y][x] = random.choice(options)
+        return self
 
     # Create zero or more children from self and other
     def generate_children(self, other):
-        new_genome = copy.deepcopy(self.genome)
-        # Leaving first and last columns alone...
-        # do crossover with other
-        left = 1
-        right = width - 1
-        for y in range(height):
-            for x in range(left, right):
-                # STUDENT Which one should you take?  Self, or other?  Why?
-                # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-                pass
-        # do mutation; note we're returning a one-element tuple here
-        return (Individual_Grid(new_genome),)
+        pa = random.randint(0, len(self.genome) - 1)
+        pb = random.randint(0, len(other.genome) - 1)
+        a_part = self.genome[:pa] if len(self.genome) > 0 else []
+        b_part = other.genome[pb:] if len(other.genome) > 0 else []
+        ga = a_part + b_part
+        b_part = other.genome[:pb] if len(other.genome) > 0 else []
+        a_part = self.genome[pa:] if len(self.genome) > 0 else []
+        gb = b_part + a_part
+        # Perform mutation
+        return Individual_DE(self.mutate(ga)), Individual_DE(self.mutate(gb))
+
 
     # Turn the genome into a level string (easy for this genome)
     def to_level(self):
@@ -179,88 +175,95 @@ class Individual_DE(object):
             self.calculate_fitness()
         return self._fitness
 
-    def mutate(self, new_genome):
-        # STUDENT How does this work?  Explain it in your writeup.
-        # STUDENT consider putting more constraints on this, to prevent generating weird things
-        if random.random() < 0.1 and len(new_genome) > 0:
-            to_change = random.randint(0, len(new_genome) - 1)
-            de = new_genome[to_change]
+    def mutate(self, genome):
+        if random.random() < 0.1 and len(genome) > 0:
+            to_change = random.randint(0, len(genome) - 1)
+            de = genome[to_change]
             new_de = de
             x = de[0]
             de_type = de[1]
             choice = random.random()
-            if de_type == "4_block":
-                y = de[2]
-                breakable = de[3]
-                if choice < 0.33:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                elif choice < 0.66:
-                    y = offset_by_upto(y, height / 2, min=0, max=height - 1)
-                else:
-                    breakable = not de[3]
-                new_de = (x, de_type, y, breakable)
-            elif de_type == "5_qblock":
-                y = de[2]
-                has_powerup = de[3]  # boolean
-                if choice < 0.33:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                elif choice < 0.66:
-                    y = offset_by_upto(y, height / 2, min=0, max=height - 1)
-                else:
-                    has_powerup = not de[3]
-                new_de = (x, de_type, y, has_powerup)
-            elif de_type == "3_coin":
-                y = de[2]
-                if choice < 0.5:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                else:
-                    y = offset_by_upto(y, height / 2, min=0, max=height - 1)
-                new_de = (x, de_type, y)
-            elif de_type == "7_pipe":
-                h = de[2]
-                if choice < 0.5:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                else:
-                    h = offset_by_upto(h, 2, min=2, max=height - 4)
-                new_de = (x, de_type, h)
-            elif de_type == "0_hole":
-                w = de[2]
-                if choice < 0.5:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                else:
-                    w = offset_by_upto(w, 4, min=1, max=width - 2)
-                new_de = (x, de_type, w)
-            elif de_type == "6_stairs":
-                h = de[2]
-                dx = de[3]  # -1 or 1
-                if choice < 0.33:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                elif choice < 0.66:
-                    h = offset_by_upto(h, 8, min=1, max=height - 4)
-                else:
-                    dx = -dx
-                new_de = (x, de_type, h, dx)
-            elif de_type == "1_platform":
-                w = de[2]
-                y = de[3]
-                madeof = de[4]  # from "?", "X", "B"
-                if choice < 0.25:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                elif choice < 0.5:
-                    w = offset_by_upto(w, 8, min=1, max=width - 2)
-                elif choice < 0.75:
-                    y = offset_by_upto(y, height, min=0, max=height - 1)
-                else:
-                    madeof = random.choice(["?", "X", "B"])
-                new_de = (x, de_type, w, y, madeof)
-            elif de_type == "2_enemy":
-                pass
-            new_genome.pop(to_change)
-            heapq.heappush(new_genome, new_de)
-        return new_genome
+            # Add mutation logic based on de_type
+            # ...
+        #     if de_type == "4_block":
+        #         y = de[2]
+        #         breakable = de[3]
+        #         if choice < 0.33:
+        #             x = offset_by_upto(x, width / 8, min=1, max=width - 2)
+        #         elif choice < 0.66:
+        #             y = offset_by_upto(y, height / 2, min=0, max=height - 1)
+        #         else:
+        #             breakable = not de[3]
+        #         new_de = (x, de_type, y, breakable)
+        #     elif de_type == "5_qblock":
+        #         y = de[2]
+        #         has_powerup = de[3]  # boolean
+        #         if choice < 0.33:
+        #             x = offset_by_upto(x, width / 8, min=1, max=width - 2)
+        #         elif choice < 0.66:
+        #             y = offset_by_upto(y, height / 2, min=0, max=height - 1)
+        #         else:
+        #             has_powerup = not de[3]
+        #         new_de = (x, de_type, y, has_powerup)
+        #     elif de_type == "3_coin":
+        #         y = de[2]
+        #         if choice < 0.5:
+        #             x = offset_by_upto(x, width / 8, min=1, max=width - 2)
+        #         else:
+        #             y = offset_by_upto(y, height / 2, min=0, max=height - 1)
+        #         new_de = (x, de_type, y)
+        #     elif de_type == "7_pipe":
+        #         h = de[2]
+        #         if choice < 0.5:
+        #             x = offset_by_upto(x, width / 8, min=1, max=width - 2)
+        #         else:
+        #             h = offset_by_upto(h, 2, min=2, max=height - 4)
+        #         new_de = (x, de_type, h)
+        #     elif de_type == "0_hole":
+        #         w = de[2]
+        #         if choice < 0.5:
+        #             x = offset_by_upto(x, width / 8, min=1, max=width - 2)
+        #         else:
+        #             w = offset_by_upto(w, 4, min=1, max=width - 2)
+        #         new_de = (x, de_type, w)
+        #     elif de_type == "6_stairs":
+        #         h = de[2]
+        #         dx = de[3]  # -1 or 1
+        #         if choice < 0.33:
+        #             x = offset_by_upto(x, width / 8, min=1, max=width - 2)
+        #         elif choice < 0.66:
+        #             h = offset_by_upto(h, 8, min=1, max=height - 4)
+        #         else:
+        #             dx = -dx
+        #         new_de = (x, de_type, h, dx)
+        #     elif de_type == "1_platform":
+        #         w = de[2]
+        #         y = de[3]
+        #         madeof = de[4]  # from "?", "X", "B"
+        #         if choice < 0.25:
+        #             x = offset_by_upto(x, width / 8, min=1, max=width - 2)
+        #         elif choice < 0.5:
+        #             w = offset_by_upto(w, 8, min=1, max=width - 2)
+        #         elif choice < 0.75:
+        #             y = offset_by_upto(y, height, min=0, max=height - 1)
+        #         else:
+        #             madeof = random.choice(["?", "X", "B"])
+        #         new_de = (x, de_type, w, y, madeof)
+        #     elif de_type == "2_enemy":
+        #         pass
+        #     new_genome.pop(to_change)
+        #     heapq.heappush(new_genome, new_de)
+        # return new_genome
+            genome.pop(to_change)
+            heapq.heappush(genome, new_de)
+        return genome
+
 
     def generate_children(self, other):
-        # STUDENT How does this work?  Explain it in your writeup.
+        if len(self.genome) == 0 or len(other.genome) == 0:
+            # Handle the case where one of the parents has an empty genome
+            return Individual_DE(self.genome), Individual_DE(other.genome)
+
         pa = random.randint(0, len(self.genome) - 1)
         pb = random.randint(0, len(other.genome) - 1)
         a_part = self.genome[:pa] if len(self.genome) > 0 else []
@@ -269,9 +272,12 @@ class Individual_DE(object):
         b_part = other.genome[:pb] if len(other.genome) > 0 else []
         a_part = self.genome[pa:] if len(self.genome) > 0 else []
         gb = b_part + a_part
-        # do mutation
-        return Individual_DE(self.mutate(ga)), Individual_DE(self.mutate(gb))
 
+        # Perform mutation and return individual children
+        mutated_ga = self.mutate(ga)
+        mutated_gb = self.mutate(gb)
+        return Individual_DE(mutated_ga), Individual_DE(mutated_gb)
+    
     # Apply the DEs to a base level.
     def to_level(self):
         if self._level is None:
@@ -340,17 +346,42 @@ class Individual_DE(object):
         return Individual_DE(g)
 
 
-Individual = Individual_Grid
+Individual = Individual_DE
 
 
-def generate_successors(population):
-    results = []
-    # STUDENT Design and implement this
-    # Hint: Call generate_children() on some individuals and fill up results.
-    return results
+def generate_successors(population, fitnesses, elite_size=2):
+    # Sort population by fitness in descending order
+    sorted_population = sorted(zip(population, fitnesses), key=lambda x: x[1], reverse=True)
+    new_population = []
+
+    # Elitist selection: Keep the top elite_size individuals
+    for i in range(elite_size):
+        new_population.append(sorted_population[i][0])
+
+    # Perform crossover and mutation to fill the rest of the new population
+    while len(new_population) < len(population):
+        # Select two parents (you can use tournament selection, roulette wheel selection, etc.)
+        parent1 = random.choice(population)
+        parent2 = random.choice(population)
+
+        # Generate children through crossover
+        child1, child2 = parent1.generate_children(parent2)
+
+        new_population.append(child1)
+        if len(new_population) < len(population):
+            new_population.append(child2)
+
+    return new_population
+
+
+
 
 
 def ga():
+    # Ensure the levels directory exists
+    if not os.path.exists("levels"):
+        os.makedirs("levels")
+
     # STUDENT Feel free to play with this parameter
     pop_limit = 480
     # Code to parallelize some computations
@@ -394,7 +425,9 @@ def ga():
                     break
                 # STUDENT Also consider using FI-2POP as in the Sorenson & Pasquier paper
                 gentime = time.time()
-                next_population = generate_successors(population)
+                # Calculate fitness values for the current population
+                fitnesses = [ind.fitness() for ind in population]
+                next_population = generate_successors(population, fitnesses)
                 gendone = time.time()
                 print("Generated successors in:", gendone - gentime, "seconds")
                 # Calculate fitness in batches in parallel
@@ -407,6 +440,7 @@ def ga():
         except KeyboardInterrupt:
             pass
     return population
+
 
 
 if __name__ == "__main__":
