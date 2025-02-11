@@ -40,9 +40,8 @@ class Individual_Grid(object):
     # This can be expensive so we do it once and then cache the result.
     def calculate_fitness(self):
         measurements = metrics.metrics(self.to_level())
-        # Print out the possible measurements or look at the implementation of metrics.py for other keys:
-        # print(measurements.keys())
-        # Default fitness function: Just some arbitrary combination of a few criteria. Is it good? Who knows?
+        
+        # Default fitness coefficients
         coefficients = dict(
             meaningfulJumpVariance=0.5,
             negativeSpace=0.6,
@@ -53,9 +52,40 @@ class Individual_Grid(object):
             jumps=0.4,
             jumpVariance=0.4,
             linearity=-0.5,
-            solvability=2.0
+            solvability=2.0  # Increase weight for solvability
         )
-        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m], coefficients))
+        
+        # Penalties for unbeatable levels, impossible jumps, and blocking objects
+        penalties = 0
+        
+        # Penalize unsolvable levels
+        if measurements['solvability'] == 0:
+            penalties -= 1000  # Heavy penalty for unsolvable levels
+        
+        # Penalize impossible jumps (gaps larger than 4 tiles)
+        level = self.to_level()
+        max_jump_distance = 4  # Mario's maximum jump distance
+        for y in range(height):
+            for x in range(width - 1):
+                if level[y][x] == '-' and level[y][x + 1] == '-':
+                    gap_size = 1
+                    while x + gap_size < width and level[y][x + gap_size] == '-':
+                        gap_size += 1
+                    if gap_size > max_jump_distance:
+                        penalties -= 10 * (gap_size - max_jump_distance)  # Penalize large gaps
+        
+        # Penalize blocking objects (pipes that are too tall)
+        for y in range(height):
+            for x in range(width):
+                if level[y][x] == '|' or level[y][x] == 'T':  # Pipe segments
+                    pipe_height = 0
+                    while y + pipe_height < height and (level[y + pipe_height][x] == '|' or level[y + pipe_height][x] == 'T'):
+                        pipe_height += 1
+                    if pipe_height > 3:  # Pipes taller than 3 tiles are unclimbable
+                        penalties -= 10 * (pipe_height - 3)  # Penalize tall pipes
+        
+        # Calculate final fitness
+        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m], coefficients)) + penalties
         return self
 
     # Return the cached fitness value or calculate it as needed.
@@ -150,24 +180,48 @@ class Individual_DE(object):
     # Calculate and cache fitness
     def calculate_fitness(self):
         measurements = metrics.metrics(self.to_level())
-        # Default fitness function: Just some arbitrary combination of a few criteria.  Is it good?  Who knows?
-        # STUDENT Add more metrics?
-        # STUDENT Improve this with any code you like
+        
+        # Default fitness coefficients
         coefficients = dict(
             meaningfulJumpVariance=0.5,
             negativeSpace=0.6,
             pathPercentage=0.5,
             emptyPercentage=0.6,
             linearity=-0.5,
-            solvability=2.0
+            solvability=2.0  # Increase weight for solvability
         )
+        
+        # Penalties for unbeatable levels, impossible jumps, and blocking objects
         penalties = 0
-        # STUDENT For example, too many stairs are unaesthetic.  Let's penalize that
-        if len(list(filter(lambda de: de[1] == "6_stairs", self.genome))) > 5:
-            penalties -= 2
-        # STUDENT If you go for the FI-2POP extra credit, you can put constraint calculation in here too and cache it in a new entry in __slots__.
-        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m],
-                                coefficients)) + penalties
+        
+        # Penalize unsolvable levels
+        if measurements['solvability'] == 0:
+            penalties -= 1000  # Heavy penalty for unsolvable levels
+        
+        # Penalize impossible jumps (gaps larger than 4 tiles)
+        level = self.to_level()
+        max_jump_distance = 4  # Mario's maximum jump distance
+        for y in range(height):
+            for x in range(width - 1):
+                if level[y][x] == '-' and level[y][x + 1] == '-':
+                    gap_size = 1
+                    while x + gap_size < width and level[y][x + gap_size] == '-':
+                        gap_size += 1
+                    if gap_size > max_jump_distance:
+                        penalties -= 10 * (gap_size - max_jump_distance)  # Penalize large gaps
+        
+        # Penalize blocking objects (pipes that are too tall)
+        for y in range(height):
+            for x in range(width):
+                if level[y][x] == '|' or level[y][x] == 'T':  # Pipe segments
+                    pipe_height = 0
+                    while y + pipe_height < height and (level[y + pipe_height][x] == '|' or level[y + pipe_height][x] == 'T'):
+                        pipe_height += 1
+                    if pipe_height > 3:  # Pipes taller than 3 tiles are unclimbable
+                        penalties -= 10 * (pipe_height - 3)  # Penalize tall pipes
+        
+        # Calculate final fitness
+        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m], coefficients)) + penalties
         return self
 
     def fitness(self):
