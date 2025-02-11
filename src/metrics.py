@@ -1,5 +1,6 @@
 import pathfinding
 import numpy as np
+from scipy import stats
 import sys
 
 
@@ -215,7 +216,7 @@ def metrics(levelStr):
         yy += 1
     x = np.array(solidX)
     y = np.array(solidY)
-    from scipy import stats
+    
     slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
     linearity = np.abs(r_value)
     if len(paths) > 0:
