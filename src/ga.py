@@ -444,7 +444,7 @@ class Individual_DE(object):
         return Individual_DE(g)
 
 
-Individual = Individual_Grid
+Individual = Individual_DE
 
 def tournament_selection(population, fitnesses, tournament_size=5):
     # Randomly select tournament_size individuals and return the best one
