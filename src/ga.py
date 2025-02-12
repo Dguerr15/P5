@@ -40,8 +40,9 @@ class Individual_Grid(object):
     # This can be expensive so we do it once and then cache the result.
     def calculate_fitness(self):
         measurements = metrics.metrics(self.to_level())
-        
-        # Default fitness coefficients
+        # Print out the possible measurements or look at the implementation of metrics.py for other keys:
+        # print(measurements.keys())
+        # Default fitness function: Just some arbitrary combination of a few criteria. Is it good? Who knows?
         coefficients = dict(
             meaningfulJumpVariance=0.5,
             negativeSpace=0.6,
@@ -52,40 +53,9 @@ class Individual_Grid(object):
             jumps=0.4,
             jumpVariance=0.4,
             linearity=-0.5,
-            solvability=2.0  # Increase weight for solvability
+            solvability=2.0
         )
-        
-        # Penalties for unbeatable levels, impossible jumps, and blocking objects
-        penalties = 0
-        
-        # Penalize unsolvable levels
-        if measurements['solvability'] == 0:
-            penalties -= 1000  # Heavy penalty for unsolvable levels
-        
-        # Penalize impossible jumps (gaps larger than 4 tiles)
-        level = self.to_level()
-        max_jump_distance = 4  # Mario's maximum jump distance
-        for y in range(height):
-            for x in range(width - 1):
-                if level[y][x] == '-' and level[y][x + 1] == '-':
-                    gap_size = 1
-                    while x + gap_size < width and level[y][x + gap_size] == '-':
-                        gap_size += 1
-                    if gap_size > max_jump_distance:
-                        penalties -= 10 * (gap_size - max_jump_distance)  # Penalize large gaps
-        
-        # Penalize blocking objects (pipes that are too tall)
-        for y in range(height):
-            for x in range(width):
-                if level[y][x] == '|' or level[y][x] == 'T':  # Pipe segments
-                    pipe_height = 0
-                    while y + pipe_height < height and (level[y + pipe_height][x] == '|' or level[y + pipe_height][x] == 'T'):
-                        pipe_height += 1
-                    if pipe_height > 3:  # Pipes taller than 3 tiles are unclimbable
-                        penalties -= 10 * (pipe_height - 3)  # Penalize tall pipes
-        
-        # Calculate final fitness
-        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m], coefficients)) + penalties
+        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m], coefficients))
         return self
 
     # Return the cached fitness value or calculate it as needed.
@@ -99,12 +69,22 @@ class Individual_Grid(object):
         for y in range(height):
             for x in range(1, width - 1):  # Avoid mutating the border columns
                 if random.random() < mutation_rate:
-                    # Ensure that pipes are not placed in the air
-                    if self.genome[y][x] == '|' or self.genome[y][x] == 'T':
-                        if y == height - 1 or self.genome[y + 1][x] != 'X':
-                            continue  # Skip mutation if the pipe would be floating
+                    # Ensure objects are supported or within 3 spaces of other blocks
+                    if self.genome[y][x] in ["X", "?", "B", "o"]:
+                        # Check if the tile below is solid (X, ?, B, T, |)
+                        if y < height - 1 and self.genome[y + 1][x] not in ["X", "?", "B", "T", "|"]:
+                            # Check if the block is within 3 spaces of another block horizontally
+                            too_far = True
+                            for dx in range(-3, 4):  # Check within 3 tiles horizontally
+                                if x + dx >= 0 and x + dx < width:
+                                    if self.genome[y][x + dx] in ["X", "?", "B", "T", "|"]:
+                                        too_far = False
+                                        break
+                            if too_far:
+                                continue  # Skip mutation if the block is too far from other blocks
                     self.genome[y][x] = random.choice(options)
         return self
+
 
     # Create zero or more children from self and other
     def generate_children(self, other):
@@ -145,16 +125,101 @@ class Individual_Grid(object):
 
     @classmethod
     def random_individual(cls):
-        # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-        # STUDENT also consider weighting the different tile types so it's not uniformly random
-        g = [random.choices(options, k=width) for row in range(height)]
-        g[15][:] = ["X"] * width
-        g[14][0] = "m"
-        g[7][-1] = "v"
-        g[8:14][-1] = ["f"] * 6
-        g[14:16][-1] = ["X", "X"]
-        return cls(g)
+        # Create base level with ground
+        g = [["-" for col in range(width)] for row in range(height)]
+        g[15][:] = ["X"] * width  # Initial solid ground - will stay solid
+        g[14][0] = "m"  # Mario's start position
+        g[7][-1] = "v"  # Flagpole
+        for col in range(8, 14):
+            g[col][-1] = "f"  # Flag
+        for col in range(14, 16):
+            g[col][-1] = "X"  # Solid ground
 
+        # Create ground elevation changes starting from row 14 (one above solid ground)
+        current_height = 14  # Start at one above ground level
+        x = 1  # Start after Mario's position
+        while x < width - 20:  # Leave space for end flag
+            if random.random() < 0.3:  # 30% chance for elevation change
+                change = random.choice([-1, 1])  # Go up or down
+                new_height = clip(12, current_height + change, 14)  # Limit height change, keeping one row above ground
+                
+                # Create smooth transition
+                length = random.randint(4, 8)  # Length of the elevated/lowered section
+                if change == -1:  # Going down
+                    for i in range(length):
+                        if x + i < width - 20:
+                            g[new_height][x + i] = "X"  # New ground level
+                            g[new_height + 1][x + i] = "-"  # Clear above
+                else:  # Going up
+                    for i in range(length):
+                        if x + i < width - 20:
+                            for y in range(new_height, 15):  # Stop before bottom row
+                                g[y][x + i] = "X"  # Fill in below
+                
+                x += length
+                current_height = new_height
+            else:
+                # Maintain current height
+                g[current_height][x] = "X"
+                x += 1
+
+        # Add platforms and floating blocks
+        for _ in range(35):
+            x = random.randint(1, width - 4)
+            # Find ground level at this position
+            base_height = 14  # Start checking from row 14
+            for y in range(14, 0, -1):
+                if g[y][x] == "X":
+                    base_height = y
+                    break
+            
+            # Place platform at reasonable height above ground
+            platform_y = random.randint(max(5, base_height - 4), base_height - 2)
+            platform_length = random.randint(2, 4)
+            platform_type = random.choice(["X", "B"])
+            
+            # Check for space
+            space_clear = True
+            for check_y in range(max(0, platform_y-1), min(height-1, platform_y+2)):  # Avoid bottom row
+                for check_x in range(max(1, x-1), min(width-1, x+platform_length+1)):
+                    if g[check_y][check_x] != "-":
+                        space_clear = False
+                        break
+            
+            if space_clear:
+                for i in range(platform_length):
+                    if x + i < width - 1:
+                        g[platform_y][x + i] = platform_type
+
+        # Add pipes with reduced height
+        for _ in range(10):
+            x = random.randint(1, width - 20)
+            # Find ground level at this position
+            for y in range(14, -1, -1):
+                if g[y+1][x] == "X":  # Look for ground below current position
+                    pipe_height = random.randint(0, 2)  # Reduced pipe height range
+                    # Ensure we have enough space for the pipe
+                    if y - pipe_height >= 0:
+                        # Add pipe segments from bottom up
+                        for py in range(y, y - pipe_height, -1):
+                            g[py][x] = "|"
+                        g[y - pipe_height][x] = "T"  # Add pipe top
+                    break
+
+        # Add decorative elements
+        for _ in range(50):
+            x = random.randint(1, width - 2)
+            for y in range(13, 0, -1):  # Stop before bottom row
+                if g[y+1][x] in ["X", "B"]:  # Check for support below
+                    if g[y][x] == "-":  # Only place in empty space
+                        if random.random() < 0.4:  # Question blocks and coins
+                            element = random.choice(["?", "M", "o"])
+                            g[y][x] = element
+                        elif random.random() < 0.3 and g[y][x] == "-":  # Enemies on solid ground
+                            g[y][x] = "E"
+                    break
+
+        return cls(g)
 
 def offset_by_upto(val, variance, min=None, max=None):
     val += random.normalvariate(0, variance**0.5)
@@ -219,41 +284,35 @@ class Individual_DE(object):
                     if gap_size > max_jump_distance:
                         penalties -= 10 * (gap_size - max_jump_distance)  # Penalize large gaps
         
-        # Penalize blocking objects (e.g., pipes that are too tall)
-        for y in range(height):
-            for x in range(width):
-                if level[y][x] == '|' or level[y][x] == 'T':  # Pipe segments
-                    pipe_height = 0
-                    while y + pipe_height < height and (level[y + pipe_height][x] == '|' or level[y + pipe_height][x] == 'T'):
-                        pipe_height += 1
-                    if pipe_height > 4:  # Pipes taller than 4 tiles are unclimbable
-                        penalties -= 10 * (pipe_height - 4)  # Penalize tall pipes
+        # Penalize tall pipes (height > 4)
+        for de in self.genome:
+            if de[1] == "7_pipe":  # Pipe design element
+                h = de[2]  # Height of the pipe
+                if h > 4:
+                    penalties -= 10 * (h - 4)  # Penalize tall pipes
         
-        # Penalize right-to-left stairs and reward elevation changes and smaller stairs
-        elevation_changes = 0
-        stair_penalties = 0
-        stair_rewards = 0
+        # Penalize high stairs (height > 4)
         for de in self.genome:
             if de[1] == "6_stairs":  # Stairs design element
-                dx = de[3]  # Direction: -1 (right to left) or 1 (left to right)
                 h = de[2]  # Height of the stairs
-                if dx == -1:
-                    stair_penalties -= 10  # Penalize right-to-left stairs
                 if h > 4:
-                    stair_penalties -= 5 * (h - 4)  # Penalize large stairs
-                else:
-                    stair_rewards += 5  # Reward smaller stairs
-                elevation_changes += 1  # Count elevation changes
+                    penalties -= 10 * (h - 4)  # Penalize high stairs
         
-        # Reward levels with more elevation changes
-        elevation_reward = elevation_changes * 2
+        # Penalize clutter (too many design elements)
+        if len(self.genome) > 50:  # Adjust this threshold as needed
+            penalties -= 10 * (len(self.genome) - 50)  # Penalize levels with too many elements
+        
+        # Reward elevation changes
+        elevation_changes = 0
+        for de in self.genome:
+            if de[1] in ["1_platform", "6_stairs"]:  # Platforms and stairs
+                elevation_changes += 1
+        elevation_reward = elevation_changes  # Reward levels with more elevation changes
         
         # Calculate final fitness
         self._fitness = (
             sum(map(lambda m: coefficients[m] * measurements[m], coefficients))
             + penalties
-            + stair_penalties
-            + stair_rewards
             + elevation_reward
         )
         return self
@@ -271,80 +330,31 @@ class Individual_DE(object):
             x = de[0]
             de_type = de[1]
             choice = random.random()
-            # Add mutation logic based on de_type
-            # ...
-            if de_type == "4_block":
-                y = de[2]
-                breakable = de[3]
-                if choice < 0.33:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                elif choice < 0.66:
-                    y = offset_by_upto(y, height / 2, min=0, max=height - 1)
-                else:
-                    breakable = not de[3]
-                new_de = (x, de_type, y, breakable)
-            elif de_type == "5_qblock":
-                y = de[2]
-                has_powerup = de[3]  # boolean
-                if choice < 0.33:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                elif choice < 0.66:
-                    y = offset_by_upto(y, height / 2, min=0, max=height - 1)
-                else:
-                    has_powerup = not de[3]
-                new_de = (x, de_type, y, has_powerup)
-            elif de_type == "3_coin":
-                y = de[2]
+            
+            # Mutation logic for pipes
+            if de_type == "7_pipe":
+                h = de[2]  # Height of the pipe
                 if choice < 0.5:
                     x = offset_by_upto(x, width / 8, min=1, max=width - 2)
                 else:
-                    y = offset_by_upto(y, height / 2, min=0, max=height - 1)
-                new_de = (x, de_type, y)
-            elif de_type == "7_pipe":
-                h = de[2]
-                if choice < 0.5:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                else:
-                    h = offset_by_upto(h, 2, min=2, max=height - 4)
+                    h = offset_by_upto(h, 2, min=1, max=3)  # Limit pipe height to 3 tiles
                 new_de = (x, de_type, h)
-            elif de_type == "0_hole":
-                w = de[2]
-                if choice < 0.5:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                else:
-                    w = offset_by_upto(w, 4, min=1, max=width - 2)
-                new_de = (x, de_type, w)
+            
+            # Mutation logic for stairs
             elif de_type == "6_stairs":
-                h = de[2]
-                dx = de[3]  # -1 or 1
+                h = de[2]  # Height of the stairs
+                dx = de[3]  # Direction: -1 (right to left) or 1 (left to right)
                 if choice < 0.33:
                     x = offset_by_upto(x, width / 8, min=1, max=width - 2)
                 elif choice < 0.66:
-                    h = offset_by_upto(h, 8, min=1, max=height - 4)
+                    h = offset_by_upto(h, 2, min=1, max=4)  # Limit stair height to 4 steps
                 else:
-                    dx = -dx
+                    dx = 1  # Force stairs to go left to right
                 new_de = (x, de_type, h, dx)
-            elif de_type == "1_platform":
-                w = de[2]
-                y = de[3]
-                madeof = de[4]  # from "?", "X", "B"
-                if choice < 0.25:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                elif choice < 0.5:
-                    w = offset_by_upto(w, 8, min=1, max=width - 2)
-                elif choice < 0.75:
-                    y = offset_by_upto(y, height, min=0, max=height - 1)
-                else:
-                    madeof = random.choice(["?", "X", "B"])
-                new_de = (x, de_type, w, y, madeof)
-            elif de_type == "2_enemy":
-                pass
+            
             genome.pop(to_change)
             heapq.heappush(genome, new_de)
         return genome
-        #     genome.pop(to_change)
-        #     heapq.heappush(genome, new_de)
-        # return genome
 
 
     def generate_children(self, other):
@@ -428,13 +438,13 @@ class Individual_DE(object):
             (random.randint(1, width - 2), "3_coin", random.randint(0, height - 1)),
             (random.randint(1, width - 2), "4_block", random.randint(0, height - 1), random.choice([True, False])),
             (random.randint(1, width - 2), "5_qblock", random.randint(0, height - 1), random.choice([True, False])),
-            (random.randint(1, width - 2), "6_stairs", random.randint(1, height - 4), random.choice([0, 1])),
+            (random.randint(1, width - 2), "6_stairs", random.randint(1, 4), 1),  # Limit stair height to 4 steps
             (random.randint(1, width - 2), "7_pipe", random.randint(2, height - 4))
         ]) for i in range(elt_count)]
         return Individual_DE(g)
 
 
-Individual = Individual_DE
+Individual = Individual_Grid
 
 def tournament_selection(population, fitnesses, tournament_size=5):
     # Randomly select tournament_size individuals and return the best one
