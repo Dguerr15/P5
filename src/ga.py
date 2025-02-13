@@ -270,8 +270,27 @@ class Individual_DE(object):
         
         # Penalize unsolvable levels
         if measurements['solvability'] == 0:
-            penalties -= 1000  # Heavy penalty for unsolvable levels
-        
+            penalties -= 2000  # Heavy penalty for unsolvable levels
+
+        # Enhanced clutter penalties
+        element_count = len(self.genome)
+        if element_count > 25:  # Reduced threshold
+            penalties -= 30 * (element_count - 25)  # Increased penalty
+
+        # Penalize closely packed elements
+        element_positions = [(de[0], de[1]) for de in self.genome]
+        for i, (x1, type1) in enumerate(element_positions):
+            for x2, type2 in element_positions[i+1:]:
+                if abs(x1 - x2) < 3 and type1 == type2:  # Elements of same type too close
+                    penalties -= 15
+
+        # Penalize closely packed elements
+        element_positions = [(de[0], de[1]) for de in self.genome]
+        for i, (x1, type1) in enumerate(element_positions):
+            for x2, type2 in element_positions[i+1:]:
+                if abs(x1 - x2) < 3 and type1 == type2:  # Elements of same type too close
+                    penalties -= 15
+                    
         # Penalize impossible jumps (gaps larger than 4 tiles)
         level = self.to_level()
         max_jump_distance = 4  # Mario's maximum jump distance
@@ -323,37 +342,50 @@ class Individual_DE(object):
         return self._fitness
 
     def mutate(self, genome):
+        # Chance to remove an element (new!)
+        if random.random() < 0.15 and len(genome) > 0:
+            to_remove = random.randint(0, len(genome) - 1)
+            genome.pop(to_remove)
+            return genome
+
+        # Regular mutation with improved constraints
         if random.random() < 0.1 and len(genome) > 0:
             to_change = random.randint(0, len(genome) - 1)
             de = genome[to_change]
-            new_de = de
             x = de[0]
             de_type = de[1]
-            choice = random.random()
             
-            # Mutation logic for pipes
+            # Check for nearby elements of same type
+            nearby_similar = False
+            for other_de in genome:
+                if other_de != de and other_de[1] == de_type and abs(other_de[0] - x) < 3:
+                    nearby_similar = True
+                    break
+            
+            if nearby_similar:
+                # If too crowded, increase position variance to spread things out
+                x = offset_by_upto(x, width / 4, min=1, max=width - 2)
+            
+            # Type-specific mutations with improved constraints
             if de_type == "7_pipe":
-                h = de[2]  # Height of the pipe
-                if choice < 0.5:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                else:
-                    h = offset_by_upto(h, 2, min=1, max=3)  # Limit pipe height to 3 tiles
+                h = offset_by_upto(de[2], 1, min=0, max=3)  # Shorter pipes
                 new_de = (x, de_type, h)
             
-            # Mutation logic for stairs
             elif de_type == "6_stairs":
-                h = de[2]  # Height of the stairs
-                dx = de[3]  # Direction: -1 (right to left) or 1 (left to right)
-                if choice < 0.33:
-                    x = offset_by_upto(x, width / 8, min=1, max=width - 2)
-                elif choice < 0.66:
-                    h = offset_by_upto(h, 2, min=1, max=4)  # Limit stair height to 4 steps
-                else:
-                    dx = 1  # Force stairs to go left to right
-                new_de = (x, de_type, h, dx)
+                h = offset_by_upto(de[2], 1, min=2, max=3)  # More consistent stairs
+                new_de = (x, de_type, h, 1)
+            
+            elif de_type == "1_platform":
+                w = offset_by_upto(de[2], 1, min=3, max=5)  # More consistent platforms
+                h = offset_by_upto(de[3], 1, min=2, max=4)
+                new_de = (x, de_type, w, h, "X")
+            
+            else:  # Other elements (enemies, coins, blocks)
+                new_de = de  # Keep as is if not a major structure
             
             genome.pop(to_change)
             heapq.heappush(genome, new_de)
+        
         return genome
 
 
@@ -380,44 +412,66 @@ class Individual_DE(object):
     def to_level(self):
         if self._level is None:
             base = Individual_Grid.empty_individual().to_level()
+            
+            # Ensure ground is solid except for intentional holes
+            for x in range(width):
+                base[height-1][x] = "X"
+            
+            # Process holes first
+            holes = [de for de in self.genome if de[1] == "0_hole"]
+            for de in holes:
+                x = de[0]
+                w = de[2]
+                for x2 in range(w):
+                    if 1 <= x + x2 < width - 2:  # Prevent holes at edges
+                        base[height-1][x + x2] = "-"
+            
+            # Process other elements
             for de in sorted(self.genome, key=lambda de: (de[1], de[0], de)):
-                # de: x, type, ...
                 x = de[0]
                 de_type = de[1]
-                if de_type == "4_block":
-                    y = de[2]
-                    breakable = de[3]
-                    base[y][x] = "B" if breakable else "X"
-                elif de_type == "5_qblock":
-                    y = de[2]
-                    has_powerup = de[3]  # boolean
-                    base[y][x] = "M" if has_powerup else "?"
-                elif de_type == "3_coin":
-                    y = de[2]
-                    base[y][x] = "o"
-                elif de_type == "7_pipe":
+                
+                if de_type == "7_pipe":
                     h = de[2]
-                    base[height - h - 1][x] = "T"
-                    for y in range(height - h, height):
-                        base[y][x] = "|"
-                elif de_type == "0_hole":
-                    w = de[2]
-                    for x2 in range(w):
-                        base[height - 1][clip(1, x + x2, width - 2)] = "-"
+                    if x < width - 1:  # Check if pipe fits
+                        base[height - h - 2][x] = "T"
+                        for y in range(height - h - 1, height - 1):
+                            base[y][x] = "|"
+                
                 elif de_type == "6_stairs":
                     h = de[2]
-                    dx = de[3]  # -1 or 1
-                    for x2 in range(1, h + 1):
-                        for y in range(x2 if dx == 1 else h - x2):
-                            base[clip(0, height - y - 1, height - 1)][clip(1, x + x2, width - 2)] = "X"
+                    # Build stairs from left to right, increasing in height
+                    for x2 in range(h):
+                        x_pos = x + x2
+                        if 1 <= x_pos < width - 1:  # Stay within bounds
+                            # Fill from ground up to current height
+                            for y in range(x2 + 1):  # x2 + 1 ensures height increases with x
+                                y_pos = height - 2 - y  # Start from just above ground
+                                if 4 <= y_pos < height - 1:  # Keep stairs in reasonable range
+                                    base[y_pos][x_pos] = "X"
+                
                 elif de_type == "1_platform":
                     w = de[2]
                     h = de[3]
-                    madeof = de[4]  # from "?", "X", "B"
-                    for x2 in range(w):
-                        base[clip(0, height - h - 1, height - 1)][clip(1, x + x2, width - 2)] = madeof
+                    madeof = de[4]
+                    y_pos = height - h - 2
+                    if 4 <= y_pos < height - 2:  # Keep platforms in reasonable range
+                        for x2 in range(w):
+                            if 1 <= x + x2 < width - 1:
+                                base[y_pos][x + x2] = madeof
+                
                 elif de_type == "2_enemy":
-                    base[height - 2][x] = "E"
+                    if 1 <= x < width - 1 and base[height-2][x] != "|":  # Don't place enemies on pipes
+                        base[height-2][x] = "E"
+                
+                elif de_type in ["3_coin", "4_block", "5_qblock"]:
+                    y = de[2]
+                    if 4 <= y < height - 2 and 1 <= x < width - 1:  # Keep in reasonable range
+                        value = "o" if de_type == "3_coin" else \
+                            "B" if de_type == "4_block" and de[3] else "X" if de_type == "4_block" else \
+                            "M" if de_type == "5_qblock" and de[3] else "?"
+                        base[y][x] = value
+            
             self._level = base
         return self._level
 
@@ -429,18 +483,54 @@ class Individual_DE(object):
 
     @classmethod
     def random_individual(_cls):
-        # STUDENT Maybe enhance this
-        elt_count = random.randint(8, 128)
-        g = [random.choice([
-            (random.randint(1, width - 2), "0_hole", random.randint(1, 8)),
-            (random.randint(1, width - 2), "1_platform", random.randint(1, 8), random.randint(0, height - 1), random.choice(["?", "X", "B"])),
-            (random.randint(1, width - 2), "2_enemy"),
-            (random.randint(1, width - 2), "3_coin", random.randint(0, height - 1)),
-            (random.randint(1, width - 2), "4_block", random.randint(0, height - 1), random.choice([True, False])),
-            (random.randint(1, width - 2), "5_qblock", random.randint(0, height - 1), random.choice([True, False])),
-            (random.randint(1, width - 2), "6_stairs", random.randint(1, 4), 1),  # Limit stair height to 4 steps
-            (random.randint(1, width - 2), "7_pipe", random.randint(2, height - 4))
-        ]) for i in range(elt_count)]
+        # Generate fewer elements to reduce clutter
+        elt_count = random.randint(8, 48)
+        g = []
+        
+        # Add elevation changes through platforms and stairs first
+        elevation_count = random.randint(8, 12)  # Increased from previous version
+        for _ in range(elevation_count):
+            x = random.randint(1, width - 15)  # Give more room for elements
+            if random.random() < 0.6:  # 60% chance for stairs vs platforms
+                # Stairs - always going right (dx = 1)
+                height = random.randint(2, 3)  # Manageable height
+                g.append((x, "6_stairs", height, 1))  # Force stairs to go left to right
+            else:
+                # Platform
+                width_platform = random.randint(3, 7)
+                height = random.randint(2, 4)  # Varied heights
+                g.append((x, "1_platform", width_platform, height, "X"))  # More solid platforms
+        
+        # Add some holes (but not too many)
+        hole_count = random.randint(2, 4)
+        for _ in range(hole_count):
+            x = random.randint(1, width - 10)
+            hole_width = random.randint(2, 3)  # Smaller holes
+            g.append((x, "0_hole", hole_width))
+        
+        # Add shorter pipes
+        pipe_count = random.randint(3, 5)
+        for _ in range(pipe_count):
+            x = random.randint(1, width - 10)
+            height = random.randint(0, 3)  # Reduced height range
+            g.append((x, "7_pipe", height))
+        
+        # Add decorative elements
+        decoration_count = random.randint(15, 20)  # Increased decorations
+        for _ in range(decoration_count):
+            x = random.randint(1, width - 10)
+            y = random.randint(8, 12)
+            if random.random() < 0.6:
+                g.append((x, "3_coin", y))  # More coins
+            else:
+                g.append((x, "5_qblock", y, random.choice([True, False])))
+        
+        # Add enemies on ground and platforms
+        enemy_count = random.randint(4, 7)
+        for _ in range(enemy_count):
+            x = random.randint(1, width - 10)
+            g.append((x, "2_enemy"))
+        
         return Individual_DE(g)
 
 
